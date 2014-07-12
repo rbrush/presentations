@@ -8,6 +8,10 @@
             [schema.core :as s]
             [clj-time.core :refer [now in-weeks interval date-time]]))
 
+
+;;;;;;;;;;;;;;;;;;
+;; Records used by the demo.
+
 ;; Work order.
 (s/defrecord WorkOrder
     [location :- s/Str
@@ -34,6 +38,8 @@
 (s/defrecord ValidationError
     [reason :- s/Str])
 
+;;;;;;;;;;;;;;;;;;
+;; Example rules.
 (defrule no-items
   "Valid orders must have at least one line item."
   [:not [LineItem]]
@@ -45,7 +51,6 @@
   [date]
   (in-weeks (interval (now) date)))
 
-;; Example rules.
 (defrule date-too-early
   "We can't schedule something too early."
   [WorkOrder (< (weeks-until date) 2)]
@@ -94,47 +99,6 @@
 ;; Query session for approvals
 (pprint (query session needs-approval))
 
-;; Rules are data.
-(pprint date-too-early)
-
-(pprint budget-limit)
-
-;; The network is data
-(pprint (com/to-beta-tree (com/load-rules 'midwestio.demo)))
-
-;; Show the network.
-(viz/show-network! 'midwestio.demo)
-
-;; Show the logic.
-(viz/show-logic! 'midwestio.demo)
-
-;; Select a subset of logic we're interested in!
-(viz/show-logic!
- (filter
-  #(viz/inserts? % ValidationError)
-  (viz/get-productions ['midwestio.demo])))
-
-;; Let's see what inserts or uses the approval required fact.
-;; List comprehensions are great for finding interesting data.
-(-> (for [production (viz/get-productions ['midwestio.demo])
-
-          :when (or  (viz/inserts? production ApprovalRequired)
-                     (viz/uses? production ApprovalRequired))]
-      production)
-
-    (viz/show-logic!))
-
-;; Rules can be created from a data structure. Constraints stored
-;; in external files or databases and read into the structure.
-(-> [{:lhs [{:type midwestio.demo.WorkOrder
-             :constraints '[(= ?location location)
-                            (= :high priority)]}]
-      :rhs '(println (str "High priority order for " ?location "!"))}]
-
-    (mk-session)
-    (insert (->WorkOrder "KC" (date-time 2014 1 25) :high))
-    (fire-rules))
-
 ;; Immutable working memory.
 (def s1
   (-> (mk-session 'midwestio.demo)
@@ -164,7 +128,8 @@
                ])
 
 ;; Create an immutable session with our reference data, and simply reuse it.
-(def ref-session (insert-all (mk-session 'midwestio.demo :cache false) ref-data))
+(def ref-session (-> (mk-session 'midwestio.demo)
+                     (insert-all  ref-data)))
 
 ;; We can now reuse it rather than creating and loading a new session every time!
 (pprint
@@ -177,6 +142,43 @@
 ;; And the ref session itself is unmodified and can be used by others.
 (pprint (query ref-session needs-approval))
 
+;; Rules are data.
+(pprint date-too-early)
+
+(pprint budget-limit)
+
+;; The network is data
+(pprint (com/to-beta-tree (com/load-rules 'midwestio.demo)))
+
+;; Show the network.
+(viz/show-network! 'midwestio.demo)
+
+;; Show the logic.
+(viz/show-logic! 'midwestio.demo)
+
+;; Select a subset of logic we're interested in!
+(->> (viz/get-productions ['midwestio.demo])
+     (filter (fn [production] (viz/inserts? production ValidationError)))
+     (viz/show-logic!))
+
+;; Let's see what inserts or uses the approval required fact.
+;; List comprehensions are great for finding interesting data.
+(->> (viz/get-productions ['midwestio.demo])
+     (filter (fn [production]
+               (or  (viz/inserts? production ApprovalRequired)
+                    (viz/uses? production ApprovalRequired))))
+     (viz/show-logic!))
+
+;; Rules can be created from a data structure. Constraints stored
+;; in external files or databases and read into the structure.
+(-> [{:lhs [{:type midwestio.demo.WorkOrder
+             :constraints '[(= ?location location)
+                            (= :high priority)]}]
+      :rhs '(println (str "High priority order for " ?location "!"))}]
+
+    (mk-session)
+    (insert (->WorkOrder "KC" (date-time 2014 1 25) :high))
+    (fire-rules))
 
 ;; Explainability support
 
