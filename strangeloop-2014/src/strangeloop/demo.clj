@@ -17,25 +17,32 @@
 ;; Records used by the demo.
 
 (s/defrecord BloodPressure
-    [systolic :- s/Int
+    [person-id :- s/Int
+     systolic :- s/Int
      diastolic :- s/Int])
 
 (s/defrecord Hypertensive
-    [severity :- (s/enum :mild :moderate :severe)])
+    [person-id :- s/Int
+     severity :- (s/enum :mild :moderate :severe)])
 
 (s/defrecord RecommendedMeds
-    [type :- (s/enum :lisinopril)])
+    [person-id :- s/Int
+     type :- (s/enum :lisinopril)])
 
 (s/defrecord Demographics
-    [name :- s/Str
+    [person-id :- s/Int
+     name :- s/Str
      birth-date :- LocalDate])
 
-(s/defrecord ChronicKidneyDisease [severity :- (s/enum :mild :moderate :severe)])
+(s/defrecord ChronicKidneyDisease [person-id :- s/Int
+                                   severity :- (s/enum :mild :moderate :severe)])
 
-(s/defrecord Referral [type :- (s/enum :nephropathy :podiatry :hypertension)
+(s/defrecord Referral [person-id :- s/Int
+                       type :- (s/enum :nephropathy :podiatry :hypertension)
                        urgency :- (s/enum :low :medium :high)])
 
-(s/defrecord HighRiskPatient [demographics :- Demographics
+(s/defrecord HighRiskPatient [person-id :- s/Int
+                              demographics :- Demographics
                               condition-severity :- (s/enum :mild :moderate :severe)])
 
 ;;;;;;;;;;;;;;;;;;;
@@ -43,56 +50,61 @@
 
 (defrule moderate-hypertensive
   "Detect moderate hypertension."
-  [BloodPressure (> 140 systolic 120)]
+  [BloodPressure (= ?id person-id) (> 140 systolic 120)]
   =>
-  (insert! (->Hypertensive :moderate)))
+  (insert! (->Hypertensive ?id :moderate)))
 
 (defrule severe-hypertensive
   "Detect severe hypertension."
-  [BloodPressure (>= systolic 140)]
+  [BloodPressure (= ?id person-id) (>= systolic 140)]
   =>
-  (insert! (->Hypertensive :severe)))
+  (insert! (->Hypertensive ?id :severe)))
 
 (defrule senior-bp-meds
   "Recommend appropriate medication for hypertensive patients."
-  [Hypertensive (or (= :severe severity)
+  [Hypertensive (= ?id person-id)
+                (or (= :severe severity)
                     (= :moderate severity))]
-  [Demographics (> (age birth-date) 60)]
+  [Demographics (= ?id person-id)
+                (> (age birth-date) 60)]
   =>
-  (insert! (->RecommendedMeds :lisinopril)))
+  (insert! (->RecommendedMeds ?id :lisinopril)))
 
 (defrule bp-with-chronic-kidney
   "Hypertensive with chronic kidney should be referred
    to a nephrologist."
-  [Hypertensive (or (= :severe severity)
+  [Hypertensive (= ?id person-id)
+                (or (= :severe severity)
                     (= :moderate severity))]
-  [ChronicKidneyDisease]
+
+  [ChronicKidneyDisease (= ?id person-id)]
   =>
-  (insert! (->Referral :nephropathy :medium)))
+  (insert! (->Referral ?id :nephropathy :medium)))
 
 (defrule high-hypertensive-referral
   "Hypertensive with high severity should be referred to follow up."
-  [Hypertensive (= :severe severity)]
+  [Hypertensive (= ?id person-id)
+                (= :severe severity)]
   =>
-  (insert! (->Referral :hypertension :high)))
+  (insert! (->Referral ?id :hypertension :high)))
 
 (defrule high-risk-patient
   "Hypertensive with chronic kidney should be actively managed."
-  [ChronicKidneyDisease (= ?severity severity)]
-  [Referral (= :high urgency)]
-  [?demog <- Demographics]
+  [ChronicKidneyDisease (= ?id person-id) (= ?severity severity)]
+  [Referral (= ?id person-id) (= :high urgency)]
+  [?demog <- Demographics (= ?id person-id)]
   =>
-  (insert! (->HighRiskPatient ?demog ?severity)))
+  (insert! (->HighRiskPatient ?id ?demog ?severity)))
 
 (defquery recommended-meds
   "Recommend meds query."
   []
-  [RecommendedMeds (= ?type type)])
+  [RecommendedMeds (= ?type type) (= ?person-id person-id)])
 
 (defquery recommended-referrals
   "Returns recommended referrals."
   []
-  [Referral (= ?type type)])
+  [Referral (= ?type type ) (= ?person-id person-id)])
 
 (defquery risk-by-severity
   "Query to find high-risk patients with the given condition severity."
@@ -107,15 +119,17 @@
 ;;;;;;;;;;;;;;;;;;;
 ;; Rules Demo
 (pprint (-> (mk-session)
-            (insert (->Demographics "Alice"
+            (insert (->Demographics 1
+                                    "Alice"
                                     (-> 70 t/years t/ago))
-                    (->BloodPressure 130 100))
+                    (->BloodPressure 1 130 100))
             (fire-rules)
             (query recommended-meds)))
 
 ;; Sessions are immutable.
 (def s1 (-> (mk-session)
-            (insert (->Demographics "Alice"
+            (insert (->Demographics 1
+                                    "Alice"
                                     (-> 70 t/years t/ago)))
             (fire-rules)))
 
@@ -125,7 +139,7 @@
 
 ;; Inserting a new fact creates a new, immutable session.
 (def s2 (-> s1
-            (insert (->BloodPressure 130 100))
+            (insert (->BloodPressure 1 130 100))
             (fire-rules)))
 
 ;; Our rule now matches
@@ -136,7 +150,7 @@
 
 ;; And retraction is simple because "equals" actually means something.
 (pprint (query (-> s2
-                   (retract (->BloodPressure 130 100))
+                   (retract (->BloodPressure 1 130 100))
                    (fire-rules))
                recommended-meds))
 
@@ -153,28 +167,30 @@
                            (insert-all person-data)
                            (fire-rules))]
 
-    (for [{?type :?type} (query person-session recommended-meds)]
+    (for [{:keys [?type ?person-id]} (query person-session recommended-meds)]
 
-      ?type)))
+      {:medication ?type :for-person-id ?person-id})))
 
 (pprint
- (get-medications [(->Demographics "Alice"
+ (get-medications [(->Demographics 1
+                                   "Alice"
                                    (-> 70 t/years t/ago))
-                   (->BloodPressure 130 100)]))
+                   (->BloodPressure 1 130 100)]))
 
 ;; Rules are data
-(pprint senior-bp-meds)
+(pprint moderate-hypertensive)
 
 ;; We can generate these from a higher-level DSL.
-(pprint recommended-meds)
+(pprint senior-bp-meds)
 
 ;; And we can inspect session state as well.
 (def inspected-session
   (-> (mk-session :cache false)
-      (insert (->Demographics "Alice"
+      (insert (->Demographics 1
+                              "Alice"
                               (-> 70 t/years t/ago))
-              (->BloodPressure 150 120)
-              (->ChronicKidneyDisease :severe))
+              (->BloodPressure 1 150 120)
+              (->ChronicKidneyDisease 1 :severe))
       (fire-rules)))
 
 ;; From the console...
